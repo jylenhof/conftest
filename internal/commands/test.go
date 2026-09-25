@@ -106,6 +106,7 @@ func NewTestCommand(ctx context.Context) *cobra.Command {
 				"parser",
 				"policy",
 				"proto-file-dirs",
+				"stdin-filename",
 				"capabilities",
 				"rego-version",
 				"trace",
@@ -113,6 +114,7 @@ func NewTestCommand(ctx context.Context) *cobra.Command {
 				"show-builtin-errors",
 				"update",
 				"junit-hide-message",
+				"github-hide-passed",
 				"quiet",
 				"tls",
 			}
@@ -152,6 +154,7 @@ func NewTestCommand(ctx context.Context) *cobra.Command {
 					SuppressExceptions: runner.SuppressExceptions,
 					Tracing:            runner.Trace,
 					JUnitHideMessage:   viper.GetBool("junit-hide-message"),
+					GitHubHidePassed:   viper.GetBool("github-hide-passed"),
 				})
 				if err := outputter.Output(results); err != nil {
 					return fmt.Errorf("output results: %w", err)
@@ -183,15 +186,17 @@ func NewTestCommand(ctx context.Context) *cobra.Command {
 
 	cmd.Flags().String("ignore", "", "A regex pattern which can be used for ignoring paths")
 	cmd.Flags().String("parser", "", fmt.Sprintf("Parser to use to parse the configurations. Valid parsers: %s", parser.Parsers()))
+	cmd.Flags().String("stdin-filename", "", "Filename to use in output when testing configuration from stdin")
 	cmd.Flags().String("capabilities", "", "Path to JSON file that can restrict opa functionality against a given policy. Default: all operations allowed")
 	cmd.Flags().String("rego-version", "v1", "Which version of Rego syntax to use. Options: v0, v1")
 
 	cmd.Flags().StringP("output", "o", output.OutputStandard, fmt.Sprintf("Output format for conftest results - valid options are: %s", output.Outputs()))
 	cmd.Flags().Bool("junit-hide-message", false, "Do not include the violation message in the JUnit test name")
+	cmd.Flags().Bool("github-hide-passed", false, "In the GitHub output, skip input files whose checks all passed")
 
 	cmd.Flags().StringSliceP("policy", "p", []string{"policy"}, "Path to the Rego policy files directory")
 	cmd.Flags().StringSliceP("update", "u", []string{}, "A list of URLs can be provided to the update flag, which will download before the tests run")
-	cmd.Flags().StringSliceP("namespace", "n", []string{"main"}, "Test policies in a specific namespace")
+	cmd.Flags().StringSliceP("namespace", "n", []string{"main"}, "Test policies in specific namespaces. Supports glob wildcards (*, ?, [...]) where * matches any sequence of characters including dots. Example: 'k8s.*' matches both k8s.simple and k8s.simple.deployment")
 	cmd.Flags().StringSliceP("data", "d", []string{}, "A list of paths from which data for the rego policies will be recursively loaded")
 
 	cmd.Flags().StringSlice("proto-file-dirs", []string{}, "A list of directories containing Protocol Buffer definitions")

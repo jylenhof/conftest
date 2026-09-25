@@ -2,10 +2,12 @@ package parser
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/open-policy-agent/conftest/parser/docker"
 	dotenv "github.com/open-policy-agent/conftest/parser/dotenv"
+	"github.com/open-policy-agent/conftest/parser/groovy"
 	"github.com/open-policy-agent/conftest/parser/hcl2"
 	"github.com/open-policy-agent/conftest/parser/ignore"
 	"github.com/open-policy-agent/conftest/parser/json"
@@ -61,6 +63,26 @@ func TestNewFromPath(t *testing.T) {
 			false,
 		},
 		{
+			"test.groovy",
+			&groovy.Parser{},
+			false,
+		},
+		{
+			"Jenkinsfile",
+			&groovy.Parser{},
+			false,
+		},
+		{
+			"jEnKiNsFiLe",
+			&groovy.Parser{},
+			false,
+		},
+		{
+			"Jenkinsfile.prod",
+			&groovy.Parser{},
+			false,
+		},
+		{
 			"dockerfile.foo",
 			&docker.Parser{},
 			false,
@@ -92,8 +114,13 @@ func TestNewFromPath(t *testing.T) {
 		},
 		{
 			"noextension",
-			&yaml.Parser{},
-			false,
+			nil,
+			true,
+		},
+		{
+			"LICENSE",
+			nil,
+			true,
 		},
 		{
 			".gitignore",
@@ -142,5 +169,26 @@ func TestNewFromPath(t *testing.T) {
 				t.Errorf("Unexpected parser. expected %v actual %v", expectedType, actualType)
 			}
 		})
+	}
+}
+
+func TestParsersIncludesCycloneDX(t *testing.T) {
+	if !slices.Contains(Parsers(), CYCLONEDX) {
+		t.Fatalf("Parsers() should include %q", CYCLONEDX)
+	}
+}
+
+func TestGroovyParserRegistered(t *testing.T) {
+	actual, err := New(GROOVY)
+	if err != nil {
+		t.Fatal("new groovy parser:", err)
+	}
+
+	if _, ok := actual.(*groovy.Parser); !ok {
+		t.Fatalf("unexpected parser type %T", actual)
+	}
+
+	if !slices.Contains(Parsers(), GROOVY) {
+		t.Errorf("expected %q in registered parsers", GROOVY)
 	}
 }

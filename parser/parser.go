@@ -13,11 +13,13 @@ import (
 	"github.com/spf13/viper"
 	"golang.org/x/exp/slices"
 
+	"github.com/open-policy-agent/conftest/parser/codeowners"
 	"github.com/open-policy-agent/conftest/parser/cue"
 	"github.com/open-policy-agent/conftest/parser/cyclonedx"
 	"github.com/open-policy-agent/conftest/parser/docker"
 	dotenv "github.com/open-policy-agent/conftest/parser/dotenv"
 	"github.com/open-policy-agent/conftest/parser/edn"
+	"github.com/open-policy-agent/conftest/parser/groovy"
 	"github.com/open-policy-agent/conftest/parser/hcl1"
 	"github.com/open-policy-agent/conftest/parser/hcl2"
 	"github.com/open-policy-agent/conftest/parser/hocon"
@@ -39,10 +41,12 @@ import (
 // The defined parsers are the parsers that are valid for
 // parsing files.
 const (
+	CODEOWNERS = "codeowners"
 	CUE        = "cue"
 	CYCLONEDX  = "cyclonedx"
 	Dockerfile = "dockerfile"
 	EDN        = "edn"
+	GROOVY     = "groovy"
 	HCL1       = "hcl1"
 	HCL2       = "hcl2"
 	HOCON      = "hocon"
@@ -104,6 +108,8 @@ func New(parser string) (Parser, error) {
 		return &nginx.Parser{}, nil
 	case EDN:
 		return &edn.Parser{}, nil
+	case GROOVY:
+		return &groovy.Parser{}, nil
 	case VCL:
 		return &vcl.Parser{}, nil
 	case XML:
@@ -131,6 +137,8 @@ func New(parser string) (Parser, error) {
 		}
 
 		return parser, nil
+	case CODEOWNERS:
+		return &codeowners.Parser{}, nil
 	default:
 		return nil, fmt.Errorf("unknown parser: %v", parser)
 	}
@@ -170,7 +178,7 @@ func NewFromPath(path string) (Parser, error) {
 
 	fileName := strings.ToLower(filepath.Base(path))
 
-	fileExtension := "yml"
+	fileExtension := ""
 	if len(filepath.Ext(path)) > 0 {
 		fileExtension = strings.ToLower(filepath.Ext(path)[1:])
 	}
@@ -207,8 +215,18 @@ func NewFromPath(path string) (Parser, error) {
 		return New(NGINX)
 	}
 
+	// A Jenkinsfile can either be named Jenkinsfile or be prefixed with
+	// Jenkinsfile. For example: Jenkinsfile, Jenkinsfile.prod.
+	if fileName == "jenkinsfile" || strings.HasPrefix(fileName, "jenkinsfile.") {
+		return New(GROOVY)
+	}
+
 	if slices.Contains(textproto.TextProtoFileExtensions, fileExtension) {
 		return New(TEXTPROTO)
+	}
+
+	if fileName == "codeowners" {
+		return New(CODEOWNERS)
 	}
 
 	parser, err := New(fileExtension)
@@ -222,9 +240,12 @@ func NewFromPath(path string) (Parser, error) {
 // Parsers returns a list of the supported Parsers.
 func Parsers() []string {
 	parsers := []string{
+		CODEOWNERS,
 		CUE,
+		CYCLONEDX,
 		Dockerfile,
 		EDN,
+		GROOVY,
 		HCL1,
 		HCL2,
 		HOCON,

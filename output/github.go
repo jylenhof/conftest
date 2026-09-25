@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/open-policy-agent/opa/v1/tester"
 )
@@ -21,12 +22,19 @@ const (
 // https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions
 type GitHub struct {
 	writer io.Writer
+
+	// hidePassed skips the per-file annotation group for input files that
+	// only have successful checks. The summary line still counts every test.
+	hidePassed bool
 }
 
-// NewGitHub creates a new GitHub with the given writer.
-func NewGitHub(w io.Writer) *GitHub {
+// NewGitHub creates a new GitHub with the given writer. When hidePassed is
+// true, input files whose checks all passed are omitted from the annotation
+// output to reduce noise.
+func NewGitHub(w io.Writer, hidePassed bool) *GitHub {
 	github := GitHub{
-		writer: w,
+		writer:     w,
+		hidePassed: hidePassed,
 	}
 
 	return &github
@@ -34,19 +42,14 @@ func NewGitHub(w io.Writer) *GitHub {
 
 // Output outputs the results.
 func (g *GitHub) Output(checkResults CheckResults) error {
-	var totalFailures int
-	var totalExceptions int
-	var totalWarnings int
-	var totalSuccesses int
-	var totalSkipped int
 	for _, result := range checkResults {
-		totalFailures += len(result.Failures)
-		totalExceptions += len(result.Exceptions)
-		totalWarnings += len(result.Warnings)
-		totalSkipped += len(result.Skipped)
-		totalSuccesses += result.Successes
+		// When hidePassed is set, skip files that only have successful checks.
+		// Their tests still count toward the summary line.
+		if g.hidePassed && len(result.Failures) == 0 && len(result.Warnings) == 0 && len(result.Exceptions) == 0 && len(result.Skipped) == 0 {
+			continue
+		}
 
-		numPolicies := result.Successes + len(result.Failures) + len(result.Warnings) + len(result.Exceptions) + len(result.Skipped)
+		numPolicies := result.Totals().Tests()
 
 		fileLoc := &Location{File: result.FileName, Line: json.Number("1")}
 
@@ -67,15 +70,7 @@ func (g *GitHub) Output(checkResults CheckResults) error {
 		g.writeLn("::endgroup::")
 	}
 
-	totalTests := totalFailures + totalExceptions + totalWarnings + totalSuccesses + totalSkipped
-
-	g.writeLn("%d %s, %d passed, %d %s, %d %s, %d %s",
-		totalTests, plural("test", totalTests),
-		totalSuccesses,
-		totalWarnings, plural("warning", totalWarnings),
-		totalFailures, plural("failure", totalFailures),
-		totalExceptions, plural("exception", totalExceptions),
-	)
+	g.writeLn("%s", checkResults.Totals())
 
 	return nil
 }
@@ -84,9 +79,24 @@ func (g *GitHub) writeLn(msg string, args ...any) {
 	fmt.Fprintf(g.writer, msg+"\n", args...)
 }
 
+// escapeProperty escapes a workflow command property value. ':' and ',' delimit
+// the property block, so a file name containing either would end it early.
+// https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands
+func escapeProperty(v string) string {
+	return strings.NewReplacer(
+		"%", "%25",
+		"\r", "%0D",
+		"\n", "%0A",
+		":", "%3A",
+		",", "%2C",
+	).Replace(v)
+}
+
 func (g *GitHub) writeLoc(level githubLevel, loc *Location, msg string, args ...any) {
-	msg = fmt.Sprintf("::%s file=%s,line=%s::%s", level, loc.File, loc.Line, msg)
-	g.writeLn(msg, args...)
+	// Format the message first: the escaped file name contains '%' sequences
+	// that must not be read as verbs by the final Fprintf.
+	msg = fmt.Sprintf(msg, args...)
+	g.writeLn("%s", fmt.Sprintf("::%s file=%s,line=%s::%s", level, escapeProperty(loc.File), loc.Line, msg))
 }
 
 func (g *GitHub) writeLocs(level githubLevel, fileLoc, ogLoc *Location, msg string, args ...any) {

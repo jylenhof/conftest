@@ -26,14 +26,14 @@ import (
 
 // Engine represents the policy engine.
 type Engine struct {
-	trace                 bool
-	builtinErrors         bool
-	modules               map[string]*ast.Module
-	compiler              *ast.Compiler
-	store                 storage.Store
-	policies              map[string]string
-	docs                  map[string]string
-	enableInterQueryCache bool
+	trace           bool
+	builtinErrors   bool
+	modules         map[string]*ast.Module
+	compiler        *ast.Compiler
+	store           storage.Store
+	policies        map[string]string
+	docs            map[string]string
+	interQueryCache cache.InterQueryCache
 }
 
 // CompilerOptions defines the options for the Rego compiler.
@@ -173,8 +173,11 @@ func (e *Engine) ShowBuiltinErrors() {
 	e.builtinErrors = true
 }
 
+// EnableInterQueryCache enables OPA's inter-query builtin cache (used by http.send) for the
+// lifetime of the Engine. The cache must outlive a single query so that results are shared
+// across every rule and input evaluated by this Engine.
 func (e *Engine) EnableInterQueryCache() {
-	e.enableInterQueryCache = true
+	e.interQueryCache = cache.NewInterQueryCache(nil)
 }
 
 // Check executes all of the loaded policies against the input and returns the results.
@@ -301,6 +304,12 @@ func (e *Engine) check(ctx context.Context, path string, config any, namespace s
 		return output.CheckResult{}, fmt.Errorf("add file info: %w", err)
 	}
 
+	// Convert the input once so OPA doesn't re-parse it on every query call.
+	inputValue, err := ast.InterfaceToValue(config)
+	if err != nil {
+		return output.CheckResult{}, fmt.Errorf("convert input: %w", err)
+	}
+
 	var rules []string
 	var ruleCount int
 	for _, module := range e.Modules() {
@@ -343,7 +352,7 @@ func (e *Engine) check(ctx context.Context, path string, config any, namespace s
 		// is queried, so the severity prefix must be removed.
 		exceptionQuery := fmt.Sprintf("data.%s.exception[_][_] == %q", namespace, removeRulePrefix(rule))
 
-		exceptionQueryResult, err := e.query(ctx, config, exceptionQuery)
+		exceptionQueryResult, err := e.query(ctx, inputValue, exceptionQuery)
 		if err != nil {
 			return output.CheckResult{}, fmt.Errorf("query exception: %w", err)
 		}
@@ -361,7 +370,7 @@ func (e *Engine) check(ctx context.Context, path string, config any, namespace s
 		}
 
 		ruleQuery := fmt.Sprintf("data.%s.%s", namespace, rule)
-		ruleQueryResult, err := e.query(ctx, config, ruleQuery)
+		ruleQueryResult, err := e.query(ctx, inputValue, ruleQuery)
 		if err != nil {
 			return output.CheckResult{}, fmt.Errorf("query rule: %w", err)
 		}
@@ -446,11 +455,11 @@ func (e *Engine) addFileInfo(ctx context.Context, path string) error {
 // Example queries could include:
 // data.main.deny to query the deny rule in the main namespace
 // data.main.warn to query the warn rule in the main namespace
-func (e *Engine) query(ctx context.Context, input any, query string) (output.QueryResult, error) {
+func (e *Engine) query(ctx context.Context, input ast.Value, query string) (output.QueryResult, error) {
 	ph := printHook{s: &[]string{}}
 	builtInErrors := &[]topdown.Error{}
 	options := []func(r *rego.Rego){
-		rego.Input(input),
+		rego.ParsedInput(input),
 		rego.Query(query),
 		rego.Compiler(e.Compiler()),
 		rego.Store(e.Store()),
@@ -459,8 +468,8 @@ func (e *Engine) query(ctx context.Context, input any, query string) (output.Que
 		rego.PrintHook(ph),
 		rego.BuiltinErrorList(builtInErrors),
 	}
-	if e.enableInterQueryCache {
-		options = append(options, rego.InterQueryBuiltinCache(cache.NewInterQueryCacheWithContext(ctx, nil)))
+	if e.interQueryCache != nil {
+		options = append(options, rego.InterQueryBuiltinCache(e.interQueryCache))
 	}
 
 	regoInstance := rego.New(options...)
